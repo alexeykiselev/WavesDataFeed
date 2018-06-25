@@ -2,19 +2,20 @@ package com.wavesplatform.datafeed.settings
 
 import com.typesafe.config.Config
 import net.ceedubs.ficus.Ficus._
+
 import scala.collection.JavaConverters._
 
 object LogLevel extends Enumeration {
-  val DEBUG = Value("DEBUG")
-  val INFO = Value("INFO")
-  val WARN = Value("WARN")
-  val ERROR = Value("ERROR")
+  val DEBUG: LogLevel.Value = Value("DEBUG")
+  val INFO: LogLevel.Value = Value("INFO")
+  val WARN: LogLevel.Value = Value("WARN")
+  val ERROR: LogLevel.Value = Value("ERROR")
 }
 
 case class WDFSettings(enable: Boolean,
                        nodes: List[String],
                        matchers: List[String],
-                       datafeedDirectory: String,
+                       dataFeedDirectory: String,
                        restEnable: Boolean,
                        restAddress: String,
                        restPort: Int,

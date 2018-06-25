@@ -1,0 +1,5 @@
+project/
+target/
+.idea/
+datafeed/
+.DS_Store

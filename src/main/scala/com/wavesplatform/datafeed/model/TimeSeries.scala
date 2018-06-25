@@ -12,13 +12,13 @@ class TimeSeries(settings: WDFSettings, nodeApi: NodeApiWrapper, uetx: Unconfirm
 
   private val pairs = TrieMap[String, AssetPair]()
 
-  val DFDB = MVStoreDataFeedStorage(settings.datafeedDirectory + "/datafeed.dat")
+  val DFDB = MVStoreDataFeedStorage(settings.dataFeedDirectory + "/datafeed.dat")
 
   DFDB.getPairMaps
     .foreach(p => {
-      val pair = new AssetPair(settings, nodeApi, p._1, p._2, DFDB, uetx)
+      val pair = AssetPair(settings, nodeApi, p._1, p._2, DFDB, uetx)
       pairs.update(p._1 + "-" + p._2, pair)
-      pair.loadPair
+      pair.loadPair()
     })
 
   def getPair(amountAsset: String, priceAsset: String): Option[AssetPair] = pairs.get(amountAsset + "-" + priceAsset)
@@ -27,11 +27,10 @@ class TimeSeries(settings: WDFSettings, nodeApi: NodeApiWrapper, uetx: Unconfirm
     val pairName = tx.amountAsset + "-" + tx.priceAsset
     pairs.get(pairName) match {
       case Some(pair) => pair.addTrade(tx)
-      case None => {
-        val pair = new AssetPair(settings, nodeApi, tx.amountAsset, tx.priceAsset, DFDB, uetx)
+      case None =>
+        val pair = AssetPair(settings, nodeApi, tx.amountAsset, tx.priceAsset, DFDB, uetx)
         pairs.update(pairName, pair)
         pair.addTrade(tx)
-      }
     }
   }
 
@@ -45,7 +44,7 @@ class TimeSeries(settings: WDFSettings, nodeApi: NodeApiWrapper, uetx: Unconfirm
 
   def lastSyncedBlock: Int =  DFDB.getLastBlock
 
-  def setLastSyncedBlock(height: Int) = DFDB.setLastBlock(height)
+  def setLastSyncedBlock(height: Int): Unit = DFDB.setLastBlock(height)
 
 }
 
