@@ -1,12 +1,12 @@
 package com.wavesplatform.datafeed
 
-import com.wavesplatform.datafeed.utils.WavesAddress
-import com.wavesplatform.datafeed.model._
-import com.wavesplatform.datafeed.utils._
-import com.wavesplatform.datafeed.api._
 import akka.actor._
+import com.wavesplatform.datafeed.api._
+import com.wavesplatform.datafeed.model._
+import com.wavesplatform.datafeed.utils.{WavesAddress, _}
 import play.api.libs.json._
-import scala.collection.mutable.Queue
+
+import scala.collection.mutable
 
 class Synchronizer(nodeApi: NodeApiWrapper, uetx: UnconfirmedETX, timeseries: TimeSeries, router: ActorRef, matchers: List[String]) extends Actor with Logging {
 
@@ -16,8 +16,8 @@ class Synchronizer(nodeApi: NodeApiWrapper, uetx: UnconfirmedETX, timeseries: Ti
   val addresses = scala.collection.mutable.SortedSet[String]()
 
   val mainnet: Boolean = {
-    val req = nodeApi.get("/blocks/last")
-    if (req != JsNull && (req \ "generator").as[String].take(2)=="3P") true
+    val req = nodeApi.get("/blocks/first")
+    if (req != JsNull && (req \ "generator").as[String].take(2) == "3P") true
     else false
   }
 
@@ -34,11 +34,11 @@ class Synchronizer(nodeApi: NodeApiWrapper, uetx: UnconfirmedETX, timeseries: Ti
     val txType = if (confirmed) "tx" else "utx"
     router ! WebSocketRouter.TMessage(tx, txType)
     if ((tx \ "type").as[Int] == 7) {
-      router ! WebSocketRouter.TMessage(tx.as[Trade].toJson(confirmed), "trades/"+tx.as[Trade].amountAsset+"/"+tx.as[Trade].priceAsset)
-      router ! WebSocketRouter.TMessage(tx, "address/"+tx.as[Trade].buyer + "/" + txType)
-      router ! WebSocketRouter.TMessage(tx, "address/"+tx.as[Trade].seller + "/" + txType)
-      router ! WebSocketRouter.TMessage(tx, "asset/"+tx.as[Trade].amountAsset + "/" + txType)
-      router ! WebSocketRouter.TMessage(tx, "asset/"+tx.as[Trade].priceAsset + "/" + txType)
+      router ! WebSocketRouter.TMessage(tx.as[Trade].toJson(confirmed), "trades/" + tx.as[Trade].amountAsset + "/" + tx.as[Trade].priceAsset)
+      router ! WebSocketRouter.TMessage(tx, "address/" + tx.as[Trade].buyer + "/" + txType)
+      router ! WebSocketRouter.TMessage(tx, "address/" + tx.as[Trade].seller + "/" + txType)
+      router ! WebSocketRouter.TMessage(tx, "asset/" + tx.as[Trade].amountAsset + "/" + txType)
+      router ! WebSocketRouter.TMessage(tx, "asset/" + tx.as[Trade].priceAsset + "/" + txType)
       if (confirmed) {
         addresses += tx.as[Trade].buyer
         addresses += tx.as[Trade].seller
@@ -52,7 +52,7 @@ class Synchronizer(nodeApi: NodeApiWrapper, uetx: UnconfirmedETX, timeseries: Ti
         router ! WebSocketRouter.TMessage(tx, "address/" + (tx \ "recipient").as[String] + "/" + txType)
         addresses += (tx \ "recipient").as[String]
       }
-      if (tx.keys.contains("assetId")) router ! WebSocketRouter.TMessage (tx, "asset/" + ((tx \ "assetId").validate[String] match {
+      if (tx.keys.contains("assetId")) router ! WebSocketRouter.TMessage(tx, "asset/" + ((tx \ "assetId").validate[String] match {
         case s: JsSuccess[String] => s.get
         case e: JsError => "WAVES"
       }) + "/" + txType)
@@ -68,11 +68,11 @@ class Synchronizer(nodeApi: NodeApiWrapper, uetx: UnconfirmedETX, timeseries: Ti
         var balances = Json.obj("WAVES" -> wavesBalance)
         val reqAssetBal = nodeApi.get("/assets/balance/" + a)
         if (reqAssetBal != JsNull) {
-          (reqAssetBal \ "balances").as[List[JsObject]].sortBy(a => (a \ "assetId").as[String]).foreach(asset => {
+          (reqAssetBal \ "balances").as[List[JsObject]].sortBy(a => (a \ "assetId").as[String]).foreach { asset =>
             val assetId = (asset \ "assetId").as[String]
             val assetBalance = (asset \ "balance").as[Long]
             balances ++= Json.obj(assetId -> assetBalance)
-          })
+          }
         }
         router ! WebSocketRouter.TMessage(balances, "balance/" + a)
       } catch {
@@ -83,42 +83,42 @@ class Synchronizer(nodeApi: NodeApiWrapper, uetx: UnconfirmedETX, timeseries: Ti
   }
 
   private def getUTX: Unit = {
-    val req=nodeApi.get("/transactions/unconfirmed")
-    if(req!=JsNull) {
+    val req = nodeApi.get("/transactions/unconfirmed")
+    if (req != JsNull) {
       val utx = req.as[List[JsObject]].filter(tx => (tx \ "type").as[Int] != 7 || ((tx \ "type").as[Int] == 7 && (matchers.isEmpty || matchers.contains((tx \ "senderPublicKey").as[String]))))
       uetx(utx)
       utx.sortBy(tx => (tx \ "timestamp").as[Long]).foreach(tx =>
-        if ((tx \ "timestamp").as[Long] > lastUtxTs && (tx \ "timestamp").as[Long] < (System.currentTimeMillis + 600000L) ) {
+        if ((tx \ "timestamp").as[Long] > lastUtxTs && (tx \ "timestamp").as[Long] < (System.currentTimeMillis + 600000L)) {
           pushTXMessages(tx, false)
           lastUtxTs = (tx \ "timestamp").as[Long]
         })
     }
   }
 
-  var prevTrade:List[Trade] = Nil
+  var prevTrade: List[Trade] = Nil
   var lastUtxTs = 0L
-  var lastSyncedHeight = if (timeseries.lastSyncedBlock == 0) (if (mainnet) FirstMainnetBlock else FirstTestnetBlock) else timeseries.lastSyncedBlock
+  var lastSyncedHeight = if (timeseries.lastSyncedBlock == 0) if (mainnet) FirstMainnetBlock else FirstTestnetBlock else timeseries.lastSyncedBlock
   var lastSyncedSignature = ""
-  var lastTxQueue = Queue[String]()
+  var lastTxQueue = mutable.Queue[String]()
   var firstTxQueueBlock = 0
   var MaxBlocksInTxQueue = 100
   val MaxTxQueueSize = 65536
 
-   private def syncBlocks: Unit = {
+  private def syncBlocks(): Unit = {
 
     val (height, signature) = getHeightAndSig
 
-    if(height>0) {
+    if (height > 0) {
       val newHeight = Math.min(lastSyncedHeight + 1, height)
       if (newHeight > lastSyncedHeight || (newHeight == lastSyncedHeight && signature != lastSyncedSignature)) {
         (lastSyncedHeight + (if (newHeight > lastSyncedHeight) 1 else 0) to newHeight)
-          .map(h => {
+          .foreach { h =>
             val block = nodeApi.get("/blocks/at/" + h).as[JsObject]
             lastSyncedSignature = (block \ "signature").as[String]
             lastSyncedHeight = h
             log.info("Parsing block " + (block \ "height").as[Int])
             router ! WebSocketRouter.TMessage(block, "block")
-            (block \ "transactions").as[List[JsObject]].sortBy(tx => (tx \ "timestamp").as[Long]).foreach(tx => {
+            (block \ "transactions").as[List[JsObject]].sortBy(tx => (tx \ "timestamp").as[Long]).foreach { tx =>
               if (!lastTxQueue.contains((tx \ "id").as[String])) {
                 if (firstTxQueueBlock == 0 || (h - firstTxQueueBlock) > MaxBlocksInTxQueue) {
                   firstTxQueueBlock = h
@@ -128,8 +128,9 @@ class Synchronizer(nodeApi: NodeApiWrapper, uetx: UnconfirmedETX, timeseries: Ti
                 lastTxQueue += (tx \ "id").as[String]
                 pushTXMessages(tx, true)
                 if ((tx \ "type").as[Int] == 7 && (matchers.isEmpty || matchers.contains((tx \ "senderPublicKey").as[String]))) timeseries.addTradeToPair(tx.as[Trade])
-            }})
-          })
+              }
+            }
+          }
         pushBalances
         timeseries.setLastSyncedBlock(newHeight)
         lastUtxTs = 0L
@@ -139,9 +140,9 @@ class Synchronizer(nodeApi: NodeApiWrapper, uetx: UnconfirmedETX, timeseries: Ti
 
   }
 
-  def receive = {
+  def receive: PartialFunction[Any, Unit] = {
 
-    case "sync" => syncBlocks
+    case "sync" => syncBlocks()
 
   }
 

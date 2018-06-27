@@ -6,7 +6,7 @@ import com.wavesplatform.datafeed.NodeApiWrapper
 import com.wavesplatform.datafeed.settings.WDFSettings
 import com.wavesplatform.datafeed.storage.MVStoreDataFeedStorage
 import com.wavesplatform.datafeed.utils._
-import play.api.libs.json.{JsObject, Json}
+import play.api.libs.json._
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -44,18 +44,16 @@ case class AssetPair(settings: WDFSettings, nodeApi: NodeApiWrapper, amountAsset
   priceFormatter.setGroupingUsed(false)
 
 
-  private def getAssetSupply(assetId: String): (Long, Long, Long) =
-    if (assetId == "WAVES") (1e8.toLong, 1e8.toLong, 1e8.toLong) else {
-      val issueTx = nodeApi.get("/transactions/info/" + assetId)
-      val assets = (nodeApi.get("/assets/balance/" + (issueTx \ "sender").as[String]) \ "balances").as[List[JsObject]]
-      var supply = 0L
-      var balance = 0L
-      var reissuable = false
-      assets.foreach(a => if ((a \ "assetId").as[String] == assetId) {
-        supply = (a \ "quantity").as[Long] / Math.pow(10, (a \ "issueTransaction" \ "decimals").as[Int]).toLong
-        balance = (a \ "balance").as[Long] / Math.pow(10, (a \ "issueTransaction" \ "decimals").as[Int]).toLong
-        reissuable = (a \ "reissuable").as[Boolean]
-      })
+  private def getAssetSupply(asset: String): (BigInt, BigInt, BigInt) =
+    if (asset == "WAVES") (1e8.toLong, 1e8.toLong, 1e8.toLong) else {
+      val details = nodeApi.get(s"/assets/details/$asset")
+      val quantity = (details \ "quantity").asInstanceOf[JsDefined].value.asInstanceOf[JsNumber].value.toBigInt()
+      val decimals = (details \ "decimals").as[Int]
+      val supply = quantity / BigInt(Math.pow(10, decimals).toLong)
+      val issuer = (details \ "issuer").as[String]
+      val reissuable = (details \ "reissuable").as[Boolean]
+      val balance = (nodeApi.get(s"/assets/balance/$issuer/$asset") \ "balance").as[Long] / Math.pow(10, decimals).toLong
+
       (supply, if (reissuable) -1L else supply, supply - balance)
     }
 
